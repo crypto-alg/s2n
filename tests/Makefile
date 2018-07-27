@@ -25,6 +25,12 @@ all:
 	${MAKE} -C testlib
 	${MAKE} -C LD_PRELOAD
 	${MAKE} -C unit
+ifdef FIPS_MODE
+	echo Skipping tests of post-quantum algorithms in FIPS mode
+else
+	echo Not in FIPS mode, testing post-quantum algorithms
+	$(MAKE) -C pq-crypto
+endif
 	@echo "\033[1m ${COMPILE_INFO} \033[0;39m"
 
 .PHONY : integration
@@ -44,3 +50,4 @@ clean:
 	${MAKE} -C unit decruft
 	${MAKE} -C fuzz decruft
 	${MAKE} -C saw decruft
+	${MAKE} -C pq-crypto decruft
