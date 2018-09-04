@@ -463,6 +463,7 @@ int s2n_connection_free(struct s2n_connection *conn)
     GUARD(s2n_stuffer_free(&conn->handshake.io));
     s2n_x509_validator_wipe(&conn->x509_validator);
     GUARD(s2n_client_hello_free(&conn->client_hello));
+    GUARD(s2n_free(&conn->application_protocols_overridden));
 
     blob.data = (uint8_t *) conn;
     blob.size = sizeof(struct s2n_connection);
@@ -705,6 +706,22 @@ int s2n_connection_get_cipher_preferences(struct s2n_connection *conn, const str
     return 0;
 }
 
+int s2n_connection_get_protocol_preferences(struct s2n_connection *conn, struct s2n_blob **protocol_preferences)
+{
+    notnull_check(conn);
+    notnull_check(protocol_preferences);
+
+    *protocol_preferences = NULL;
+    if (conn->application_protocols_overridden.size > 0) {
+        *protocol_preferences = &conn->application_protocols_overridden;
+    } else {
+        *protocol_preferences = &conn->config->application_protocols;
+    }
+
+    notnull_check(*protocol_preferences);
+    return 0;
+}
+
 int s2n_connection_get_client_auth_type(struct s2n_connection *conn, s2n_cert_auth_type *client_cert_auth_type)
 {
     notnull_check(conn);
@@ -773,6 +790,11 @@ int s2n_connection_set_write_fd(struct s2n_connection *conn, int wfd)
      * Take the snapshot in case optimized io is enabled after setting the fd.
      */
     GUARD(s2n_socket_write_snapshot(conn));
+
+    uint8_t ipv6;
+    if (0 == s2n_socket_is_ipv6(wfd, &ipv6)) {
+        conn->ipv6 = (ipv6 ? 1 : 0);
+    }
 
     return 0;
 }
@@ -990,6 +1012,16 @@ int s2n_connection_prefer_low_latency(struct s2n_connection *conn)
         conn->max_outgoing_fragment_length = S2N_SMALL_FRAGMENT_LENGTH;
     }
 
+    return 0;
+}
+
+int s2n_connection_set_dynamic_record_threshold(struct s2n_connection *conn, uint32_t resize_threshold, uint16_t timeout_threshold)
+{
+    notnull_check(conn);
+    S2N_ERROR_IF(resize_threshold > S2N_TLS_MAX_RESIZE_THRESHOLD, S2N_ERR_INVALID_DYNAMIC_THRESHOLD);
+
+    conn->dynamic_record_resize_threshold = resize_threshold;
+    conn->dynamic_record_timeout_threshold = timeout_threshold;
     return 0;
 }
 
