@@ -37,6 +37,7 @@
 #include "tls/s2n_alerts.h"
 #include "tls/s2n_tls.h"
 #include "tls/s2n_prf.h"
+#include "tls/s2n_resume.h"
 
 #include "crypto/s2n_certificate.h"
 #include "crypto/s2n_cipher.h"
@@ -59,6 +60,7 @@ static int s2n_connection_new_hashes(struct s2n_connection *conn)
     GUARD(s2n_hash_new(&conn->handshake.sha384));
     GUARD(s2n_hash_new(&conn->handshake.sha512));
     GUARD(s2n_hash_new(&conn->handshake.md5_sha1));
+    GUARD(s2n_hash_new(&conn->handshake.ccv_hash_copy));
     GUARD(s2n_hash_new(&conn->handshake.prf_md5_hash_copy));
     GUARD(s2n_hash_new(&conn->handshake.prf_sha1_hash_copy));
     GUARD(s2n_hash_new(&conn->handshake.prf_tls12_hash_copy));
@@ -79,10 +81,6 @@ static int s2n_connection_init_hashes(struct s2n_connection *conn)
         GUARD(s2n_hash_init(&conn->prf_space.ssl3.md5, S2N_HASH_MD5));
     }
 
-    if (s2n_hash_is_available(S2N_HASH_MD5_SHA1)) {
-        /* Only initialize hashes that use MD5_SHA1 if available. */
-        GUARD(s2n_hash_init(&conn->handshake.md5_sha1, S2N_HASH_MD5_SHA1));
-    }
 
     /* Allow MD5 for hash states that are used by the PRF. This is required
      * to comply with the TLS 1.0 and 1.1 RFCs and is approved as per
@@ -91,15 +89,24 @@ static int s2n_connection_init_hashes(struct s2n_connection *conn)
     if (s2n_is_in_fips_mode()) {
         GUARD(s2n_hash_allow_md5_for_fips(&conn->handshake.md5));
         GUARD(s2n_hash_allow_md5_for_fips(&conn->handshake.prf_md5_hash_copy));
+        
+        /* Do not check s2n_hash_is_available before initialization. Allow MD5 and 
+         * SHA-1 for both fips and non-fips mode. This is required to perform the
+         * signature checks in the CertificateVerify message in TLS 1.0 and TLS 1.1. 
+         * This is approved per Nist SP 800-52r1.*/
+        GUARD(s2n_hash_allow_md5_for_fips(&conn->handshake.md5_sha1));
     }
+    
     GUARD(s2n_hash_init(&conn->handshake.md5, S2N_HASH_MD5));
     GUARD(s2n_hash_init(&conn->handshake.prf_md5_hash_copy, S2N_HASH_MD5));
+    GUARD(s2n_hash_init(&conn->handshake.md5_sha1, S2N_HASH_MD5_SHA1));
 
     GUARD(s2n_hash_init(&conn->handshake.sha1, S2N_HASH_SHA1));
     GUARD(s2n_hash_init(&conn->handshake.sha224, S2N_HASH_SHA224));
     GUARD(s2n_hash_init(&conn->handshake.sha256, S2N_HASH_SHA256));
     GUARD(s2n_hash_init(&conn->handshake.sha384, S2N_HASH_SHA384));
     GUARD(s2n_hash_init(&conn->handshake.sha512, S2N_HASH_SHA512));
+    GUARD(s2n_hash_init(&conn->handshake.ccv_hash_copy, S2N_HASH_NONE));
     GUARD(s2n_hash_init(&conn->handshake.prf_tls12_hash_copy, S2N_HASH_NONE));
     GUARD(s2n_hash_init(&conn->handshake.prf_sha1_hash_copy, S2N_HASH_SHA1));
     GUARD(s2n_hash_init(&conn->prf_space.ssl3.sha1, S2N_HASH_SHA1));
@@ -180,6 +187,8 @@ struct s2n_connection *s2n_connection_new(s2n_mode mode)
     conn->corked_io = 0;
     conn->context = NULL;
     conn->cipher_pref_override = NULL;
+    conn->ticket_lifetime_hint = 0;
+    conn->session_ticket_status = S2N_NO_TICKET;
 
     /* Allocate the fixed-size stuffers */
     blob.data = conn->alert_in_data;
@@ -196,6 +205,12 @@ struct s2n_connection *s2n_connection_new(s2n_mode mode)
     blob.size = S2N_ALERT_LENGTH;
 
     GUARD_PTR(s2n_stuffer_init(&conn->writer_alert_out, &blob));
+
+    blob.data = conn->ticket_ext_data;
+    blob.size = S2N_TICKET_SIZE_IN_BYTES;
+
+    GUARD_PTR(s2n_stuffer_init(&conn->client_ticket_to_decrypt, &blob));
+
     GUARD_PTR(s2n_stuffer_alloc(&conn->out, S2N_LARGE_RECORD_LENGTH));
 
     /* Allocate long term key memory */
@@ -305,6 +320,7 @@ static int s2n_connection_reset_hashes(struct s2n_connection *conn)
     GUARD(s2n_hash_reset(&conn->handshake.sha384));
     GUARD(s2n_hash_reset(&conn->handshake.sha512));
     GUARD(s2n_hash_reset(&conn->handshake.md5_sha1));
+    GUARD(s2n_hash_reset(&conn->handshake.ccv_hash_copy));
     GUARD(s2n_hash_reset(&conn->handshake.prf_md5_hash_copy));
     GUARD(s2n_hash_reset(&conn->handshake.prf_sha1_hash_copy));
     GUARD(s2n_hash_reset(&conn->handshake.prf_tls12_hash_copy));
@@ -382,6 +398,7 @@ static int s2n_connection_free_hashes(struct s2n_connection *conn)
     GUARD(s2n_hash_free(&conn->handshake.sha384));
     GUARD(s2n_hash_free(&conn->handshake.sha512));
     GUARD(s2n_hash_free(&conn->handshake.md5_sha1));
+    GUARD(s2n_hash_free(&conn->handshake.ccv_hash_copy));
     GUARD(s2n_hash_free(&conn->handshake.prf_md5_hash_copy));
     GUARD(s2n_hash_free(&conn->handshake.prf_sha1_hash_copy));
     GUARD(s2n_hash_free(&conn->handshake.prf_tls12_hash_copy));
@@ -456,7 +473,8 @@ int s2n_connection_free(struct s2n_connection *conn)
     GUARD(s2n_connection_free_hmacs(conn));
 
     GUARD(s2n_connection_free_io_contexts(conn));
-    
+
+    GUARD(s2n_free(&conn->client_ticket));
     GUARD(s2n_free(&conn->status_response));
     GUARD(s2n_stuffer_free(&conn->in));
     GUARD(s2n_stuffer_free(&conn->out));
@@ -512,6 +530,11 @@ int s2n_connection_set_config(struct s2n_connection *conn, struct s2n_config *co
         }
     }
 
+    if (config->use_tickets && auth_type != S2N_CERT_AUTH_NONE) {
+        /* s2n does not support handshakes with CLIENT_AUTH when in session resumption mode */
+        S2N_ERROR(S2N_ERR_CLIENT_AUTH_NOT_SUPPORTED_IN_SESSION_RESUMPTION_MODE);
+    }
+
     conn->config = config;
     return 0;
 }
@@ -535,6 +558,7 @@ int s2n_connection_wipe(struct s2n_connection *conn)
     struct s2n_stuffer alert_in = {{0}};
     struct s2n_stuffer reader_alert_out = {{0}};
     struct s2n_stuffer writer_alert_out = {{0}};
+    struct s2n_stuffer client_ticket_to_decrypt = {{0}};
     struct s2n_stuffer handshake_io = {{0}};
     struct s2n_stuffer client_hello_raw_message = {{0}};
     struct s2n_stuffer header_in = {{0}};
@@ -557,6 +581,7 @@ int s2n_connection_wipe(struct s2n_connection *conn)
     GUARD(s2n_stuffer_wipe(&conn->alert_in));
     GUARD(s2n_stuffer_wipe(&conn->reader_alert_out));
     GUARD(s2n_stuffer_wipe(&conn->writer_alert_out));
+    GUARD(s2n_stuffer_wipe(&conn->client_ticket_to_decrypt));
     GUARD(s2n_stuffer_wipe(&conn->handshake.io));
     GUARD(s2n_stuffer_wipe(&conn->client_hello.raw_message));
     GUARD(s2n_stuffer_wipe(&conn->header_in));
@@ -566,7 +591,9 @@ int s2n_connection_wipe(struct s2n_connection *conn)
     /* Wipe the I/O-related info and restore the original socket if necessary */
     GUARD(s2n_connection_wipe_io(conn));
 
+    GUARD(s2n_free(&conn->client_ticket));
     GUARD(s2n_free(&conn->status_response));
+    GUARD(s2n_free(&conn->application_protocols_overridden));
 
     /* Remove parsed extensions array from client_hello */
     GUARD(s2n_client_hello_free_parsed_extensions(&conn->client_hello));
@@ -596,6 +623,7 @@ int s2n_connection_wipe(struct s2n_connection *conn)
     memcpy_check(&alert_in, &conn->alert_in, sizeof(struct s2n_stuffer));
     memcpy_check(&reader_alert_out, &conn->reader_alert_out, sizeof(struct s2n_stuffer));
     memcpy_check(&writer_alert_out, &conn->writer_alert_out, sizeof(struct s2n_stuffer));
+    memcpy_check(&client_ticket_to_decrypt, &conn->client_ticket_to_decrypt, sizeof(struct s2n_stuffer));
     memcpy_check(&handshake_io, &conn->handshake.io, sizeof(struct s2n_stuffer));
     memcpy_check(&client_hello_raw_message, &conn->client_hello.raw_message, sizeof(struct s2n_stuffer));
     memcpy_check(&header_in, &conn->header_in, sizeof(struct s2n_stuffer));
@@ -617,6 +645,7 @@ int s2n_connection_wipe(struct s2n_connection *conn)
     memcpy_check(&conn->alert_in, &alert_in, sizeof(struct s2n_stuffer));
     memcpy_check(&conn->reader_alert_out, &reader_alert_out, sizeof(struct s2n_stuffer));
     memcpy_check(&conn->writer_alert_out, &writer_alert_out, sizeof(struct s2n_stuffer));
+    memcpy_check(&conn->client_ticket_to_decrypt, &client_ticket_to_decrypt, sizeof(struct s2n_stuffer));
     memcpy_check(&conn->handshake.io, &handshake_io, sizeof(struct s2n_stuffer));
     memcpy_check(&conn->client_hello.raw_message, &client_hello_raw_message, sizeof(struct s2n_stuffer));
     memcpy_check(&conn->header_in, &header_in, sizeof(struct s2n_stuffer));
@@ -738,11 +767,9 @@ int s2n_connection_get_client_auth_type(struct s2n_connection *conn, s2n_cert_au
 
 int s2n_connection_set_client_auth_type(struct s2n_connection *conn, s2n_cert_auth_type client_cert_auth_type)
 {
-    if ((client_cert_auth_type != S2N_CERT_AUTH_NONE) && s2n_is_in_fips_mode()) {
-        /* s2n support for Client Auth when in FIPS mode is not yet implemented.
-         * When implemented, FIPS only permits Client Auth for TLS 1.2
-         */
-        S2N_ERROR(S2N_ERR_CLIENT_AUTH_NOT_SUPPORTED_IN_FIPS_MODE);
+    if ((client_cert_auth_type != S2N_CERT_AUTH_NONE) && conn->config->use_tickets) {
+        /* s2n does not support handshakes with CLIENT_AUTH when in session resumption mode */
+        S2N_ERROR(S2N_ERR_CLIENT_AUTH_NOT_SUPPORTED_IN_SESSION_RESUMPTION_MODE);
     }
 
     conn->client_cert_auth_type_overridden = 1;
@@ -989,9 +1016,7 @@ int s2n_connection_kill(struct s2n_connection *conn)
 
 const uint8_t *s2n_connection_get_ocsp_response(struct s2n_connection *conn, uint32_t * length)
 {
-    if (!length) {
-        return NULL;
-    }
+    notnull_check_ptr(length);
 
     *length = conn->status_response.size;
     return conn->status_response.data;

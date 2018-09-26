@@ -734,6 +734,14 @@ callback can get any ClientHello infromation from the connection and use
 The callback can return 0 to continue handshake in s2n or it can return negative
 value to make s2n terminate handshake early with fatal handshake failure alert.
 
+### s2n\_config\_set\_alert\_behavior
+```c
+int s2n_config_set_alert_behavior(struct s2n_config *config, s2n_alert_behavior alert_behavior);
+```
+Sets whether or not a should terminate connection on WARNING alert from peer. `alert_behavior` can take the following values:
+- `S2N_ALERT_FAIL_ON_WARNINGS` - default behavior: s2n will terminate conneciton if peer sends WARNING alert.
+- `S2N_ALERT_IGNORE_WARNINGS` - with the exception of `close_notify` s2n will ignore all WARNING alerts and keep communicating with its peer.
+
 ## Client Auth Related calls
 Client Auth Related API's are not recommended for normal users. Use of these API's is discouraged.
 
@@ -894,6 +902,19 @@ int s2n_connection_set_write_fd(struct s2n_connection *conn,
 file-descriptor should be active and connected. s2n also supports setting the
 read and write file-descriptors to different values (for pipes or other unusual
 types of I/O).
+
+## s2n\_connection\_is\_valid\_for\_cipher\_preferences
+
+```c
+int s2n_connection_is_valid_for_cipher_preferences(struct s2n_connection *conn, const char *version);
+```
+
+**s2n_connection_is_valid_for_cipher_preferences** checks if the cipher used by current connection
+is supported by a given cipher preferences. It returns 
+-  1 if the connection satisfies the cipher suite 
+-  0 if it does not
+- -1 on any other errors
+
 
 ## s2n\_connection\_set\_cipher\_preferences
 
@@ -1112,6 +1133,14 @@ const uint8_t *s2n_connection_get_ocsp_response(struct s2n_connection *conn, uin
 **s2n_connection_get_ocsp_response** returns the OCSP response sent by a server
 during the handshake.  If no status response is received, NULL is returned.
 
+### s2n\_connection\_is\_ocsp\_stapled
+
+```c
+int s2n_connection_is_ocsp_stapled(struct s2n_connection *conn);
+```
+
+**s2n_connection_is_ocsp_stapled** returns 1 if OCSP response was sent (if connection is in S2N_SERVER mode) or received (if connection is in S2N_CLIENT mode) during handshake, otherwise it returns 0.
+
 ### s2n\_connection\_get\_alert
 
 ```c
@@ -1139,29 +1168,62 @@ const char * s2n_connection_get_curve(struct s2n_connection *conn);
 
 **s2n_connection_get_curve** returns a string indicating the elliptic curve used during ECDHE key exchange. The string "NONE" is returned if no curve has was used.
 
-### Session State Related calls
+### Session Resumption Related calls
 
 ```c
+int s2n_config_set_session_state_lifetime(struct s2n_config *config, uint32_t lifetime_in_secs);
+
 int s2n_connection_set_session(struct s2n_connection *conn, const uint8_t *session, size_t length);
 int s2n_connection_get_session(struct s2n_connection *conn, uint8_t *session, size_t max_length);
+int s2n_connection_get_session_ticket_lifetime_hint(struct s2n_connection *conn);
 ssize_t s2n_connection_get_session_length(struct s2n_connection *conn);
 ssize_t s2n_connection_get_session_id_length(struct s2n_connection *conn);
 int s2n_connection_is_session_resumed(struct s2n_connection *conn);
 ```
 
-- **session** session will contain serialized session related information needed to resume handshake.
+- **lifetime_in_secs** lifetime of the cached session state required to resume a handshake
+- **session** session will contain serialized session related information needed to resume handshake either using session id or session ticket.
 - **length** length of the serialized session state.
 - **max_length** Max number of bytes to copy into the **session** buffer.
 
-**s2n_connection_set_session** de-serializes the session state and updates the connection accrodingly.
+**s2n_config_set_session_state_lifetime** sets the lifetime of the cached session state. The default value is 15 hours.
 
-**s2n_connection_get_session** serializes the session state from connection and copies into the **session** buffer and returns the number of bytes that were copied.
+**s2n_connection_set_session** de-serializes the session state and updates the connection accordingly.
 
-**s2n_connection_get_session_length** returns number of bytes needed to store serailized session state; it can be used to allocate the **session** buffer.
+**s2n_connection_get_session** serializes the session state from connection and copies into the **session** buffer and returns the number of bytes that were copied. If the first byte in **session** is 1, then the next 2 bytes will contain the session ticket length, followed by session ticket and session state. If the first byte in **session** is 0, then the next byte will contain session id length, followed by session id and session state.
+
+**s2n_connection_get_session_ticket_lifetime_hint** returns the session ticket lifetime hint in seconds from the server or -1 when session ticket was not used for resumption.
+
+**s2n_connection_get_session_length** returns number of bytes needed to store serialized session state; it can be used to allocate the **session** buffer.
 
 **s2n_connection_get_session_id_length** returns session id length from the connection.
 
-**s2n_connection_is_session_resumed** checks if the handshake is abbreviated or not.
+**s2n_connection_is_session_resumed** returns 1 if the handshake was abbreviated, otherwise returns 0.
+
+### Session Ticket Specific calls
+
+```c
+int s2n_config_set_session_tickets_onoff(struct s2n_config *config, uint8_t enabled);
+int s2n_config_set_ticket_encrypt_decrypt_key_lifetime(struct s2n_config *config, uint64_t lifetime_in_secs);
+int s2n_config_set_ticket_decrypt_key_lifetime(struct s2n_config *config, uint64_t lifetime_in_secs);
+int s2n_config_add_ticket_crypto_key(struct s2n_config *config, const uint8_t *name, uint32_t name_len, uint8_t *key, uint32_t key_len, uint64_t intro_time_in_seconds_from_epoch);
+```
+
+- **enabled** when set to 0 will disable session resumption using session ticket
+- **name** name of the session ticket key that should be randomly generated to avoid collisions
+- **name_len** length of session ticket key name
+- **key** key used to perform encryption/decryption of session ticket
+- **key_len** length of the session ticket key
+- **intro_time_in_seconds_from_epoch** time at which the session ticket key is introduced. If this is 0, then intro_time_in_seconds_from_epoch is set to now.
+
+**s2n_config_set_session_tickets_onoff** enables and disables session resumption using session ticket
+
+**s2n_config_set_ticket_encrypt_decrypt_key_lifetime** sets how long a session ticket key will be in a state where it can be used for both encryption and decryption of tickets on the server side. The default value is 2 hours.
+
+**s2n_config_set_ticket_decrypt_key_lifetime** sets how long a session ticket key will be in a state where it can used just for decryption of already assigned tickets on the server side. Once decrypted, the session will resume and the server will issue a new session ticket encrypted using a key in encrypt-decrypt state. The default value is 13 hours.
+
+**s2n_config_add_ticket_crypto_key** adds session ticket key on the server side. It would be ideal to add new keys after every (encrypt_decrypt_key_lifetime_in_nanos/2) nanos because
+this will allow for gradual and linear transition of a key from encrypt-decrypt state to decrypt-only state.
 
 ### s2n\_connection\_wipe
 
