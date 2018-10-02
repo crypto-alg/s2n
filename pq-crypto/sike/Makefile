@@ -18,7 +18,6 @@ include ../../s2n.mk
 # For now we ignore all of the errors below
 FLAGS_TO_REMOVE := -pedantic -Wall -Werror
 
-
 FINAL_CFLAGS := $(filter-out $(FLAGS_TO_REMOVE),$(CFLAGS))
 
 CFLAGS=$(FINAL_CFLAGS)
