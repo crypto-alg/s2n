@@ -25,7 +25,6 @@ all:
 	${MAKE} -C testlib
 	${MAKE} -C LD_PRELOAD
 	${MAKE} -C unit
-	${MAKE} -C bike_known_answer
 	@echo "\033[1m ${COMPILE_INFO} \033[0;39m"
 
 .PHONY : integration
@@ -45,4 +44,3 @@ clean:
 	${MAKE} -C unit decruft
 	${MAKE} -C fuzz decruft
 	${MAKE} -C saw decruft
-	${MAKE} -C bike_known_answer decruft
