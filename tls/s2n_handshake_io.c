@@ -313,8 +313,10 @@ int s2n_conn_set_handshake_type(struct s2n_connection *conn)
                 return 0;
             }
 
-            conn->session_ticket_status = S2N_NEW_TICKET;
-            conn->handshake.handshake_type |= WITH_SESSION_TICKET;
+            if (s2n_config_is_encrypt_decrypt_key_available(conn->config) == 1) {
+                conn->session_ticket_status = S2N_NEW_TICKET;
+                conn->handshake.handshake_type |= WITH_SESSION_TICKET;
+            }
 
             /* If a session ticket is presented by the client, then skip lookup in Session ID server cache */
             goto skip_cache_lookup;
@@ -693,13 +695,16 @@ int s2n_negotiate(struct s2n_connection *conn, s2n_blocked_status * blocked)
             if (handshake_write_io(conn) < 0 && s2n_errno != S2N_ERR_BLOCKED) {
                 /* Non-retryable write error. The peer might have sent an alert. Try and read it. */
                 const int write_s2n_errno = s2n_errno;
+                const char *write_s2n_debug_str = s2n_debug_str;
 
                 if (handshake_read_io(conn) < 0 && s2n_errno == S2N_ERR_ALERT) {
                     /* handshake_read_io has set s2n_errno */
                     return -1;
                 } else {
                     /* Let the write error take precedence if we didn't read an alert. */
-                    S2N_ERROR(write_s2n_errno);
+                    s2n_errno = write_s2n_errno;
+                    s2n_debug_str = write_s2n_debug_str;
+                    return -1;
                 }
             }
         } else {
