@@ -1,0 +1,39 @@
+#
+# Copyright 2014 Amazon.com, Inc. or its affiliates. All Rights Reserved.
+#
+# Licensed under the Apache License, Version 2.0 (the "License").
+# You may not use this file except in compliance with the License.
+# A copy of the License is located at
+#
+#  http://aws.amazon.com/apache2.0
+#
+# or in the "license" file accompanying this file. This file is distributed
+# on an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either
+# express or implied. See the License for the specific language governing
+# permissions and limitations under the License.
+#
+.DEFAULT_GOAL := all
+
+include ../../s2n.mk
+
+#WA for GCC 4.8.5 bug.
+CFLAGS += -Wno-missing-braces -Wno-missing-field-initializers
+
+# Currently only BIKE1_L1 is supportted in the S2N library!
+CFLAGS += -DBIKE_VER=1 -DLEVEL=1 -DCONSTANT_TIME -DUSE_OPENSSL
+
+CFLAGS += -I../../
+
+SRCS=$(wildcard *.c)
+OBJS=$(SRCS:.c=.o)
+
+.PHONY : all
+all: libbike1_l1.a
+
+libbike1_l1.a: ${OBJS}
+	$(AR) cru libbike1_l1.a ${OBJS}
+	$(RANLIB) libbike1_l1.a
+
+.PHONY : clean
+clean:
+	${MAKE} decruft
