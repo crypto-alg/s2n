@@ -15,12 +15,10 @@
 .DEFAULT_GOAL := all
 
 include ../../s2n.mk
-# For now we ignore all of the errors below
-FLAGS_TO_REMOVE := -pedantic -Wall -Werror
 
-FINAL_CFLAGS := $(filter-out $(FLAGS_TO_REMOVE),$(CFLAGS))
+#WA for GCC 4.8.5 bug.
+CFLAGS += -Wno-missing-braces -Wno-missing-field-initializers
 
-CFLAGS=$(FINAL_CFLAGS)
 CFLAGS+=-I../../
 
 SRCS=fp_generic.c P503.c sike_p503_kem.c fips202.c
