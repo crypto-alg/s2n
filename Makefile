@@ -46,6 +46,7 @@ include s2n.mk
 
 .PHONY : libs
 libs:
+	$(MAKE) -C pq-crypto
 	$(MAKE) -C utils
 	$(MAKE) -C error
 	$(MAKE) -C stuffer
@@ -56,12 +57,6 @@ libs:
 .PHONY : bin
 bin: libs
 	$(MAKE) -C bin
-	$(MAKE) -C utils
-	$(MAKE) -C error
-	$(MAKE) -C stuffer
-	$(MAKE) -C crypto
-	$(MAKE) -C tls
-	$(MAKE) -C lib
 
 .PHONY : integration
 integration: bin
@@ -89,6 +84,7 @@ fuzz-linux : bin
 
 .PHONY : indent
 indent:
+	$(MAKE) -C pq-crypto indentsource
 	$(MAKE) -C tests indentsource
 	$(MAKE) -C stuffer indentsource
 	$(MAKE) -C crypto indentsource
@@ -102,6 +98,7 @@ pre_commit_check: all indent clean
 
 .PHONY : clean
 clean:
+	$(MAKE) -C pq-crypto clean
 	$(MAKE) -C tests clean
 	$(MAKE) -C stuffer decruft
 	$(MAKE) -C crypto decruft
