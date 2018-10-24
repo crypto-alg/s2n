@@ -85,7 +85,6 @@ int s2n_ecdhe_server_recv_params(struct s2n_connection *conn, struct s2n_blob *d
 int s2n_dhe_server_recv_params(struct s2n_connection *conn, struct s2n_blob *data_to_verify)
 {
     struct s2n_stuffer *in = &conn->handshake.io;
-    struct s2n_blob p, g, Ys = {0};
     uint16_t p_length;
     uint16_t g_length;
     uint16_t Ys_length;
@@ -96,18 +95,15 @@ int s2n_dhe_server_recv_params(struct s2n_connection *conn, struct s2n_blob *dat
 
     /* Read each of the three elements in */
     GUARD(s2n_stuffer_read_uint16(in, &p_length));
-    p.size = p_length;
-    p.data = s2n_stuffer_raw_read(in, p.size);
+    struct s2n_blob p = { .size = p_length, .data = s2n_stuffer_raw_read(in, p_length)};
     notnull_check(p.data);
 
     GUARD(s2n_stuffer_read_uint16(in, &g_length));
-    g.size = g_length;
-    g.data = s2n_stuffer_raw_read(in, g.size);
+    struct s2n_blob g = {.size = g_length, .data = s2n_stuffer_raw_read(in, g_length)};
     notnull_check(g.data);
 
     GUARD(s2n_stuffer_read_uint16(in, &Ys_length));
-    Ys.size = Ys_length;
-    Ys.data = s2n_stuffer_raw_read(in, Ys.size);
+    struct s2n_blob Ys = {.size = Ys_length, .data = s2n_stuffer_raw_read(in, Ys_length)};
     notnull_check(Ys.data);
 
     /* Now we know the total size of the structure */

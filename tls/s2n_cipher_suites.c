@@ -865,7 +865,7 @@ static int s2n_set_cipher_as_server(struct s2n_connection *conn, uint8_t * wire,
                 continue;
             }
 
-            if(!s2n_kex_supported(match->key_exchange_alg, conn)){
+            if (!s2n_kex_supported(match->key_exchange_alg, conn)) {
                 continue;
             }
 
