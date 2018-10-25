@@ -20,8 +20,8 @@ let conn_secure_cipher_suite pconn =
 //let key_exchange_algorithm csuite = crucible_elem csuite 3;
 let key_exchange_algorithm csuite = crucible_field csuite "key_exchange_alg";
 
-//let kea_is_ephemeral kea = crucible_elem kea 0;
-let kea_is_ephemeral kea = crucible_field kea "is_ephemeral";
+let kea_is_ephemeral kea = crucible_elem kea 0;
+//let kea_is_ephemeral kea = crucible_field kea "is_ephemeral";
 
 //conn->status_type
 let conn_status_type pconn = crucible_field pconn "status_type";
